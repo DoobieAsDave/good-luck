@@ -36,40 +36,24 @@ right => adsr => jcReverb => stereo => dac.right;
 .1 => chorus.modDepth;
 .5 => chorus.mix;
 
-.35 => nReverb.mix;
+1.0 => nReverb.mix;
 .2 => jcReverb.mix;
 
-1.0 / 150.0 => left.gain => right.gain;
-1.0 / 200.0 => mid.gain;
+1.0 / 250.0 => left.gain => right.gain;
+1.0 / 300.0 => mid.gain;
 
 ///
-
-mid.gain() => float maxMidVolume;
-left.gain() => float maxLeftrightVolume;
-
-tempo.note * 2 => dur chordDuration;
-chordDuration * .5 => dur attack;
-chordDuration * .25 => dur decay;
-.75 => float sustain;
-chordDuration * .2 => dur release;
-
-(attack, decay, sustain, release) => adsr.set;
-
-[0, -5] @=> int melodyA[];
-[1,  1] @=> int harmonyA[];
-
-[-7, -3] @=> int melodyB[];
-[ 1,  0] @=> int harmonyB[];
-
-[-7, -4, -5, -7] @=> int melodyRef[];
-[ 1,  1,  1,  1] @=> int harmonyRef[];
 
 55 => int key;
 
-///
+tempo.note * 2 => dur chordDuration;
 
-float midVolume;
-float leftRightVolume;
+dur attack, decay, release;
+float sustain;
+
+//
+
+float masterVolume;
 
 float stereoPan;
 
@@ -81,6 +65,37 @@ float lpFilterQ;
 float lpFilterVolume;
 
 ///
+
+function void modulateVolume(Gain left, Gain right, dur modTime, float min, float max, float aps, int direction) {
+    aps => float step;
+    max - min => float range;
+    range / aps => float sit;
+
+    if (!direction) {
+        min => masterVolume;
+    }
+    else {
+        max => masterVolume;
+        aps * -1 => step;
+    }
+
+    while(true) {
+        masterVolume => left.gain;
+        masterVolume => right.gain;
+        step +=> masterVolume;
+
+        if (masterVolume >= max) {
+            aps * -1 => step;
+        }
+        else if (masterVolume <= min) {
+            aps => step;
+        }  
+
+        <<< masterVolume >>>;      
+
+        modTime / sit => now;
+    }
+}
 
 function void modualteStereoPan(Pan2 stereo, dur modTime, float min, float max, float aps, int direction) {
     aps => float step;
@@ -247,9 +262,13 @@ function void modulateLPFVolume(LPF filter, dur modTime, float min, float max, f
     }
 }
 
-function void runSynth(int sequence[], int harmony[]) {
+///
+
+function void runSynth(int sequence[], int harmony[], dur durations[], int fadeOut) {
     while(true) {
         for (0 => int step; step < sequence.cap(); step++) {
+            setADSR(durations[step]);
+            
             key + sequence[step] => int baseKey;
             
             Std.mtof(baseKey) => voice1.freq;
@@ -267,60 +286,106 @@ function void runSynth(int sequence[], int harmony[]) {
             }                        
 
             adsr.keyOn();
-            chordDuration - release => now;
+            durations[step] - release => now;
             adsr.keyOff();
             release => now;
+
+            if (!fadeOut) {
+                // let rest of chordDuration run out
+                chordDuration - durations[step] => now;
+            }
+        }
+
+        if (fadeOut) {
+            break;
         }
     }
+}
+function void setADSR(dur duration) {
+    duration * .5 => attack;
+    duration * .25 => decay;
+    Math.random2f(.6, .85) => sustain;
+
+    if (duration != tempo.note * 4) {
+        duration * .4 => release;
+    }
+    else {
+        duration * .6 => release;
+    }
+
+    (attack, decay, sustain, release) => adsr.set;
 }
 
 ///
 
-Shred synthShred;
-Shred midVolumeShred, leftRightVolumeShred, stereoShred, lfoFreqShred, lfoVolShred, lpfFreqShred;
+[0] @=> int melodyIntro[];
+[1] @=> int harmonyIntro[];
+[tempo.note] @=> dur durationsIntro[];
 
+[0, -5] @=> int melodyA[];
+[1,  1] @=> int harmonyA[];
+[tempo.note, tempo.note * .9] @=> dur durationsA[];
+
+[-7, -3] @=> int melodyB[];
+[ 1,  0] @=> int harmonyB[];
+[tempo.note, tempo.note * 2] @=> dur durationsB[];
+
+[-7, -4, -5, -3] @=> int melodyRef[];
+[ 1,  1,  1,  0] @=> int harmonyRef[];
+[tempo.note * 2, tempo.note * 2, tempo.note * 2, tempo.note * 2] @=> dur durationsRef[];
+
+[0, -1, -3, -3] @=> int melodyBridge[];
+[1,  0,  0,  0] @=> int harmonyBridge[];
+[tempo.note * 2, (tempo.note * 2) * .8, tempo.note * 2, (tempo.note * 2) * .7] @=> dur durationsBridge[];
+
+[0, -1, -3, -3, -4] @=> int melodyOutro[];
+[1,  0,  0,  0,  1] @=> int harmonyOutro[];
+[tempo.note * 2, tempo.note * 2, tempo.note * 2, tempo.note * 2, tempo.note * 4] @=> dur durationsOutro[];
+
+
+Shred synthShred;
+Shred volumeShred, stereoShred, lfoFreqShred, lfoVolShred, lpfFreqShred;
+
+///
+
+spork ~ modulateVolume(left, right, tempo.note * 16, (1.0 / 1000.0), (1.0 / 250.0), .001, 0) @=> volumeShred;
 spork ~ modualteStereoPan(stereo, tempo.note / 3, -.25, .35, 0.01, 0) @=> stereoShred;
 spork ~ modulateLFOFreq(lfo, tempo.quarterNote, 2.0, 8.0, 0.01, 0) @=> lfoFreqShred;
 spork ~ modulateLFOVolume(lfo, tempo.note, 2.0, 5.0, 0.01, 0) @=> lfoVolShred;
 spork ~ modulateLPFFreq(lpFilter, tempo.note * 2, 20.0, 800.0, 10.0, 0) @=> lpfFreqShred;
 
-<<< "intro" >>>;
-
-spork ~ runSynth([0], [1]) @=> synthShred;
-tempo.note * 8 => now;
-
-<<< "part a" >>>;
-
-Machine.remove(synthShred.id());
-spork ~ runSynth(melodyA, harmonyA) @=> synthShred;
+<<< "synth: intro" >>>;
+spork ~ runSynth(melodyIntro, harmonyIntro, durationsIntro, 0) @=> synthShred;
 tempo.note * 16 => now;
+<<< "synth: a" >>>;
+Machine.remove(volumeShred.id());
 Machine.remove(synthShred.id());
-spork ~ runSynth(melodyB, harmonyB) @=> synthShred;
-tempo.note * 4 => now;
-spork ~ runSynth(melodyA, harmonyA) @=> synthShred;
-tempo.note * 12 => now;
-Machine.remove(synthShred.id());
-spork ~ runSynth(melodyRef, harmonyRef) @=> synthShred;
-tempo.note * 8 => now;
-
-<<< "part b" >>>;
-
-Machine.remove(synthShred.id());
-spork ~ runSynth(melodyA, harmonyA) @=> synthShred;
+spork ~ runSynth(melodyA, harmonyA, durationsA, 0) @=> synthShred;
 tempo.note * 16 => now;
+<<< "synth: b" >>>;
 Machine.remove(synthShred.id());
-spork ~ runSynth(melodyB, harmonyB) @=> synthShred;
-tempo.note * 4 => now;
-spork ~ runSynth(melodyA, harmonyA) @=> synthShred;
-tempo.note * 12 => now;
+spork ~ runSynth(melodyB, harmonyB, durationsB, 0) @=> synthShred;
+tempo.note * 16 => now;
+<<< "synth: ref" >>>;
 Machine.remove(synthShred.id());
-spork ~ runSynth(melodyRef, harmonyRef) @=> synthShred;
+spork ~ runSynth(melodyRef, harmonyRef, durationsRef, 0) @=> synthShred;
 tempo.note * 8 => now;
-
+<<< "synth: bridge" >>>;
 Machine.remove(synthShred.id());
-spork ~ runSynth([0, 0, 0, -3], [1, 1, 1, 1]) @=> synthShred;
+spork ~ runSynth(melodyBridge, harmonyBridge, durationsBridge, 0) @=> synthShred;
 tempo.note * 8 => now;
-
+<<< "synth: ref" >>>;
 Machine.remove(synthShred.id());
+spork ~ runSynth(melodyRef, harmonyRef, durationsRef, 0) @=> synthShred;
+tempo.note * 8 => now;
+<<< "synth: bridge" >>>;
+Machine.remove(synthShred.id());
+spork ~ runSynth(melodyBridge, harmonyBridge, durationsBridge, 0) @=> synthShred;
+tempo.note * 8 => now;
+<<< "synth: outro" >>>;
+Machine.remove(synthShred.id());
+spork ~ runSynth(melodyOutro, harmonyOutro, durationsOutro, 1) @=> synthShred;
+tempo.note * 16 => now;
+<<< "synth: end" >>>;
 
-// 80 bars + 8 bars intro + 6 bars outro
+// 96 bars - (16 bars intro, 16 bars outro) = 64 bars
