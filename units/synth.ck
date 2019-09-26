@@ -26,8 +26,7 @@ right => adsr => jcReverb => stereo => dac.right;
 
 ///
 
-5.0 => lfo.freq;
-8 => lfo.gain;
+2.0 => lfo.freq => lfo.gain; 
 
 2 => voice1.sync => voice2.sync => voice3.sync => voice4.sync;
 .8 => voice1.gain => voice2.gain => voice3.gain => voice4.gain;
@@ -39,8 +38,8 @@ right => adsr => jcReverb => stereo => dac.right;
 1.0 => nReverb.mix;
 .2 => jcReverb.mix;
 
-1.0 / 250.0 => left.gain => right.gain;
-1.0 / 300.0 => mid.gain;
+0.0 => left.gain => right.gain;
+0.0 => mid.gain;
 
 ///
 
@@ -51,9 +50,13 @@ tempo.note * 2 => dur chordDuration;
 dur attack, decay, release;
 float sustain;
 
+1.0 / 350.0 => float maxMidVolume;
+1.0 / 300.0 => float maxOuterVolume;
+
 //
 
-float masterVolume;
+float midVolume;
+float outerVolume;
 
 float stereoPan;
 
@@ -66,32 +69,53 @@ float lpFilterVolume;
 
 ///
 
-function void modulateVolume(Gain left, Gain right, dur modTime, float min, float max, float aps, int direction) {
+function void modulateMidVolume(Gain mid, dur modTime, float min, float max, float aps, int direction) {
     aps => float step;
     max - min => float range;
     range / aps => float sit;
 
-    if (!direction) {
-        min => masterVolume;
-    }
-    else {
-        max => masterVolume;
-        aps * -1 => step;
-    }
+    mid.gain() => midVolume;
 
     while(true) {
-        masterVolume => left.gain;
-        masterVolume => right.gain;
-        step +=> masterVolume;
+        midVolume => mid.gain;        
+        step +=> midVolume;
 
-        if (masterVolume >= max) {
+        if (midVolume >= max) {
             aps * -1 => step;
         }
-        else if (masterVolume <= min) {
+        else if (midVolume <= min) {
             aps => step;
-        }  
+        }   
 
-        <<< masterVolume >>>;      
+        modTime / sit => now;
+    }
+}
+function void modulateOuterVolume(Gain left, Gain right, dur modTime, float min, float max, float aps, int direction) {
+    aps => float step;
+    max - min => float range;
+    range / aps => float sit;
+
+    /* if (!direction) {
+        min => outerVolume;
+    }
+    else {
+        max => outerVolume;
+        aps * -1 => step;
+    } */
+
+    left.gain() => outerVolume;
+
+    while(true) {
+        outerVolume => left.gain;
+        outerVolume => right.gain;
+        step +=> outerVolume;
+
+        if (outerVolume >= max) {
+            aps * -1 => step;
+        }
+        else if (outerVolume <= min) {
+            aps => step;
+        }   
 
         modTime / sit => now;
     }
@@ -102,13 +126,7 @@ function void modualteStereoPan(Pan2 stereo, dur modTime, float min, float max, 
     max - min => float range;
     (range / aps) * 2 => float sit;
 
-    if (!direction) {
-        min => stereoPan;
-    }
-    else {
-        max => stereoPan;
-        aps * -1 => step;
-    }
+    stereo.pan() => stereoPan;
 
     while(true) {
         stereoPan => stereo.pan;
@@ -130,13 +148,7 @@ function void modulateLFOFreq(SinOsc lfo, dur modTime, float min, float max, flo
     max - min => float range;
     (range / aps) * 2 => float sit;
 
-    if (!direction) {
-        min => lfoFreq;
-    }
-    else {
-        max => lfoFreq;
-        aps * -1 => step;
-    }
+    lfo.freq() => lfoFreq;
 
     while(true) {
         lfoFreq => lfo.freq;
@@ -157,13 +169,7 @@ function void modulateLFOVolume(SinOsc lfo, dur modTime, float min, float max, f
     max - min => float range;
     (range / aps) * 2 => float sit;
 
-    if (!direction) {
-        min => lfoVolume;
-    }
-    else {
-        max => lfoVolume;
-        aps * -1 => step;        
-    }
+    lfo.gain() => lfoVolume;
 
     while(true) {
         lfoVolume => lfo.gain;
@@ -185,13 +191,7 @@ function void modulateLPFFreq(LPF filter, dur modTime, float min, float max, flo
     max - min => float range;
     (range / aps) * 2 => float sit;
 
-    if (!direction) {
-        min => lpFilterFreq;
-    }
-    else {
-        max => lpFilterFreq;
-        aps * -1 => step;
-    }
+    filter.freq() => lpFilterFreq;
 
     while(true) {
         lpFilterFreq => filter.freq;
@@ -212,13 +212,7 @@ function void modulateLPFQ(LPF filter, dur modTime, float min, float max, float 
     max - min => float range;
     (range / aps) * 2 => float sit;
 
-    if (!direction) {
-        min => lpFilterQ;
-    }
-    else {
-        max => lpFilterQ;
-        aps * -1 => step;
-    }
+    filter.Q() => lpFilterQ;
 
     while(true) {
         lpFilterQ => filter.Q;
@@ -239,13 +233,7 @@ function void modulateLPFVolume(LPF filter, dur modTime, float min, float max, f
     max - min => float range;
     (range / aps) * 2 => float sit;
 
-    if (!direction) {
-        min => lpFilterVolume;
-    }
-    else {
-        max => lpFilterVolume;
-        aps * -1 => step;
-    }
+    filter.gain() => lpFilterVolume;
 
     while(true) {
         lpFilterVolume => filter.gain;
@@ -344,11 +332,13 @@ function void setADSR(dur duration) {
 
 
 Shred synthShred;
-Shred volumeShred, stereoShred, lfoFreqShred, lfoVolShred, lpfFreqShred;
+Shred midVolumeShred, outerVolumeShred, stereoShred, lfoFreqShred, lfoVolShred, lpfFreqShred;
 
 ///
 
-spork ~ modulateVolume(left, right, tempo.note * 16, (1.0 / 1000.0), (1.0 / 250.0), .001, 0) @=> volumeShred;
+spork ~ modulateMidVolume(mid, tempo.note * 16, 0.0, maxMidVolume, .000001, 0) @=> midVolumeShred;
+spork ~ modulateOuterVolume(left, right, tempo.note * 16, 0.0, maxOuterVolume, .000001, 0) @=> outerVolumeShred;
+
 spork ~ modualteStereoPan(stereo, tempo.note / 3, -.25, .35, 0.01, 0) @=> stereoShred;
 spork ~ modulateLFOFreq(lfo, tempo.quarterNote, 2.0, 8.0, 0.01, 0) @=> lfoFreqShred;
 spork ~ modulateLFOVolume(lfo, tempo.note, 2.0, 5.0, 0.01, 0) @=> lfoVolShred;
@@ -358,7 +348,8 @@ spork ~ modulateLPFFreq(lpFilter, tempo.note * 2, 20.0, 800.0, 10.0, 0) @=> lpfF
 spork ~ runSynth(melodyIntro, harmonyIntro, durationsIntro, 0) @=> synthShred;
 tempo.note * 16 => now;
 <<< "synth: a" >>>;
-Machine.remove(volumeShred.id());
+Machine.remove(midVolumeShred.id());
+Machine.remove(outerVolumeShred.id());
 Machine.remove(synthShred.id());
 spork ~ runSynth(melodyA, harmonyA, durationsA, 0) @=> synthShred;
 tempo.note * 16 => now;
